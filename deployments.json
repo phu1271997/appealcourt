@@ -1,0 +1,22 @@
+{
+  "network": "studionet",
+  "chainId": 61999,
+  "deployer": "0x8b563A8c9eeF530300e92E26457D1AB001daEcC7",
+  "contracts": {
+    "CreatorReputation": {
+      "address": "0x0AfBD8B0A8d2795CE979334cF76E9d8707C224F8",
+      "tx": "0x11231e4e8b129d2d6e5f0d47442d2afe032a340aeabfc117d2c0812f28ab2e07",
+      "explorer": "https://genlayer-explorer.vercel.app/address/0x0AfBD8B0A8d2795CE979334cF76E9d8707C224F8"
+    },
+    "EnBanc": {
+      "address": "0x07cFBD3ec3Dad67D0Ae8016aC44E39fF59039D22",
+      "tx": "0x555d4ccff792a7c94ed6b42f23e00da7d749980674de51330dc75e87417f1ff5",
+      "explorer": "https://genlayer-explorer.vercel.app/address/0x07cFBD3ec3Dad67D0Ae8016aC44E39fF59039D22"
+    },
+    "AppealCase": {
+      "address": "0x5594e5317e0fc5Fd17Eac1F2D0B0Fe0C66dA61D9",
+      "tx": "0x946f4d347a9651449be12ea745a67be1ea886ec385fc58eec5345d402eb4e6c9",
+      "explorer": "https://genlayer-explorer.vercel.app/address/0x5594e5317e0fc5Fd17Eac1F2D0B0Fe0C66dA61D9"
+    }
+  }
+}
