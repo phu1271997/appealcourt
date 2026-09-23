@@ -114,9 +114,9 @@ Open `http://localhost:5174` in your browser.
 
 | Contract | Address | Explorer Link |
 |---|---|---|
-| **AppealCase** | `0x5594e5317e0fc5Fd17Eac1F2D0B0Fe0C66dA61D9` | [View on Explorer](https://genlayer-explorer.vercel.app/address/0x5594e5317e0fc5Fd17Eac1F2D0B0Fe0C66dA61D9) |
-| **EnBanc** | `0x07cFBD3ec3Dad67D0Ae8016aC44E39fF59039D22` | [View on Explorer](https://genlayer-explorer.vercel.app/address/0x07cFBD3ec3Dad67D0Ae8016aC44E39fF59039D22) |
-| **CreatorReputation** | `0x0AfBD8B0A8d2795CE979334cF76E9d8707C224F8` | [View on Explorer](https://genlayer-explorer.vercel.app/address/0x0AfBD8B0A8d2795CE979334cF76E9d8707C224F8) |
+| **AppealCase** | `0xb727deE03260539af5D35F214c0671Ea6C5a5f8B` | [View on Explorer](https://genlayer-explorer.vercel.app/address/0xb727deE03260539af5D35F214c0671Ea6C5a5f8B) |
+| **EnBanc** | `0x3C89E1aBDEADf87a344434dd45B2Ac062A59f4d0` | [View on Explorer](https://genlayer-explorer.vercel.app/address/0x3C89E1aBDEADf87a344434dd45B2Ac062A59f4d0) |
+| **CreatorReputation** | `0x79Bc835E8354820868396e06cA5e529Bb6b83779` | [View on Explorer](https://genlayer-explorer.vercel.app/address/0x79Bc835E8354820868396e06cA5e529Bb6b83779) |
 
 - **Deployer Wallet:** `0x8b563A8c9eeF530300e92E26457D1AB001daEcC7`
 - **RPC Endpoint:** `https://studio.genlayer.com/api`

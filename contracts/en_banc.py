@@ -70,6 +70,11 @@ class EnBanc(gl.Contract):
         self.reputation_contract = rep_contract
 
     @gl.public.write.payable
+    def fund_pool(self) -> None:
+        """Allow admin or supporters to deposit native GEN into the En Banc refund pool."""
+        pass
+
+    @gl.public.write.payable
     def request_review(
         self,
         case_id: str,
@@ -92,19 +97,26 @@ class EnBanc(gl.Contract):
         if len(statement) > 1000:
             raise gl.vm.UserError("Statement exceeds 1000 characters")
 
+        if case_id in self.case_to_review_id:
+            raise gl.vm.UserError("Case already has an En Banc review")
+
         # Fetch case data from AppealCase
         appeal_contract = gl.get_contract_at(self.appeal_case_contract)
-        case_json_str = appeal_contract.get_case(args=[case_id])
+        case_json_str = appeal_contract.view().get_case(case_id)
         case_data = json.loads(case_json_str)
 
         orig_state = case_data.get("state", "")
-        if orig_state not in ["RULED", "EN_BANC_REQUESTED"]:
+        if orig_state not in ["RULED", "FINAL", "EN_BANC_REQUESTED"]:
             raise gl.vm.UserError("Case is not eligible for En Banc review")
 
         original_stake = int(case_data.get("stake", "0"))
         required_stake = original_stake * 2
         if int(gl.message.value) < required_stake:
             raise gl.vm.UserError("En Banc review requires double the original stake")
+
+        # Ensure AppealCase transitions to EN_BANC_REQUESTED
+        if orig_state != "EN_BANC_REQUESTED":
+            appeal_contract.emit().notify_en_banc_requested(case_id)
 
         sender_str = _addr_str(gl.message.sender_address)
         review_id_int = int(self.next_id)
@@ -250,43 +262,29 @@ RESPOND WITH ONLY VALID JSON (no markdown fences):
         rev.state = "RULED"
         rev.ruled_at_epoch = _now_epoch()
 
-        # Execute En Banc settlement
+        # Execute En Banc settlement - atomic, no silent error suppression
         if verdict == "REVERSE":
             # Refund En Banc stake to appellant
-            try:
-                gl.get_contract_at(Address(appellant)).emit_transfer(
-                    value=u256(int(rev.stake))
-                )
-            except Exception:
-                pass
+            gl.get_contract_at(Address(appellant)).emit_transfer(
+                value=u256(int(rev.stake))
+            )
 
             # Notify AppealCase contract to settle with overturned verdict
-            try:
-                appeal_contract = gl.get_contract_at(self.appeal_case_contract)
-                appeal_contract.settle_from_en_banc(
-                    args=[case_id, new_appeal_verdict, reason, confidence]
-                )
-            except Exception:
-                pass
+            appeal_contract = gl.get_contract_at(self.appeal_case_contract)
+            appeal_contract.emit().settle_from_en_banc(
+                case_id, new_appeal_verdict, reason, confidence
+            )
 
             # Notify CreatorReputation of En Banc win
             if self.reputation_contract:
-                try:
-                    rep = gl.get_contract_at(self.reputation_contract)
-                    rep.record_verdict(
-                        args=[appellant, platform, "EN_BANC_WIN"]
-                    )
-                except Exception:
-                    pass
+                rep = gl.get_contract_at(self.reputation_contract)
+                rep.emit().record_verdict(appellant, platform, "EN_BANC_WIN")
         else:
             # UPHOLD: Notify AppealCase that En Banc affirmed original ruling
-            try:
-                appeal_contract = gl.get_contract_at(self.appeal_case_contract)
-                appeal_contract.settle_from_en_banc(
-                    args=[case_id, orig_verdict, reason, confidence]
-                )
-            except Exception:
-                pass
+            appeal_contract = gl.get_contract_at(self.appeal_case_contract)
+            appeal_contract.emit().settle_from_en_banc(
+                case_id, orig_verdict, reason, confidence
+            )
 
         rev.state = "FINAL"
 
@@ -315,6 +313,8 @@ RESPOND WITH ONLY VALID JSON (no markdown fences):
         self.next_id = bigint(review_id_int + 1)
         review_id_str = str(review_id_int)
 
+        actual_stake = stake * (10**18) if stake < 10**15 else stake
+
         review = EnBancReview(
             case_id=case_id,
             appellant=appellant,
@@ -325,7 +325,7 @@ RESPOND WITH ONLY VALID JSON (no markdown fences):
             original_verdict=orig_verdict,
             extra_urls=extra_urls,
             request_statement=statement,
-            stake=bigint(stake),
+            stake=bigint(actual_stake),
             state="FINAL",
             verdict=verdict,
             new_appeal_verdict=new_appeal_verdict,
@@ -341,7 +341,7 @@ RESPOND WITH ONLY VALID JSON (no markdown fences):
         if verdict == "REVERSE" and self.reputation_contract:
             try:
                 rep = gl.get_contract_at(self.reputation_contract)
-                rep.record_verdict(args=[appellant, platform, "EN_BANC_WIN"])
+                rep.emit().record_verdict(appellant, platform, "EN_BANC_WIN")
             except Exception:
                 pass
 
@@ -379,7 +379,7 @@ RESPOND WITH ONLY VALID JSON (no markdown fences):
         if case_id not in self.case_to_review_id:
             return json.dumps(None)
         rid = self.case_to_review_id[case_id]
-        return self.get_review(args=[rid])
+        return self.get_review(rid)
 
     @gl.public.view
     def list_reviews(self, offset: int, limit: int) -> str:

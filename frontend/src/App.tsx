@@ -100,6 +100,34 @@ interface StatsData {
 const PLATFORMS = ['All', 'YouTube', 'X', 'Reddit', 'Substack', 'TikTok', 'Twitch', 'Other'];
 const ACTIONS = ['TAKEDOWN', 'DEMONETIZATION', 'SHADOWBAN', 'STRIKE', 'SUSPENSION', 'BAN'];
 
+const WEI_PER_GEN = 1000000000000000000n; // 10^18
+
+function parseGen(amount: string | number): bigint {
+  const val = String(amount).trim();
+  if (!val) return 1000n * WEI_PER_GEN;
+  const [whole, frac = ''] = val.split('.');
+  const fracPad = frac.padEnd(18, '0').slice(0, 18);
+  return BigInt(whole) * WEI_PER_GEN + BigInt(fracPad);
+}
+
+function formatGen(baseUnits: string | bigint | number): string {
+  try {
+    const b = BigInt(baseUnits);
+    if (b < 1000000000000000n) {
+      return b.toLocaleString();
+    }
+    const whole = b / WEI_PER_GEN;
+    const remainder = b % WEI_PER_GEN;
+    if (remainder === 0n) {
+      return whole.toLocaleString();
+    }
+    const dec = (remainder / 100000000000000n).toString().padStart(4, '0');
+    return `${whole.toLocaleString()}.${dec.replace(/0+$/, '')}`;
+  } catch {
+    return String(baseUnits);
+  }
+}
+
 export default function App() {
   const [account, setAccount] = useState<string | null>(null);
   const [balance, setBalance] = useState<string>('0');
@@ -331,7 +359,7 @@ export default function App() {
       setConsensusMsg('AI Jury is reading the platform rule URL and content URL on-chain... (typically 20-40s)');
       const client = getGenLayerClient(account as `0x${string}`);
 
-      const stakeInt = parseInt(formStake, 10) || 1000;
+      const stakeWei = parseGen(formStake || '1000');
       const tx = await client.writeContract({
         address: APPEAL_CASE_ADDRESS,
         functionName: 'file_appeal',
@@ -343,7 +371,7 @@ export default function App() {
           formQuote.trim(),
           formExplanation.trim(),
         ],
-        value: BigInt(stakeInt),
+        value: stakeWei,
       });
 
       setLastTxHash(tx);
@@ -391,14 +419,18 @@ export default function App() {
       setConsensusMsg('En Banc appellate court is reading multi-source cross-check documents... (typically 25-45s)');
       const client = getGenLayerClient(account as `0x${string}`);
 
-      const origStake = parseInt(selectedCase.stake, 10) || 1000;
-      const doubleStake = origStake * 2;
+      const origStakeWei = selectedCase.stake
+        ? BigInt(selectedCase.stake) < 1000000000000000n
+          ? BigInt(selectedCase.stake) * WEI_PER_GEN
+          : BigInt(selectedCase.stake)
+        : 1000n * WEI_PER_GEN;
+      const doubleStakeWei = origStakeWei * 2n;
 
       const tx = await client.writeContract({
         address: EN_BANC_ADDRESS,
         functionName: 'request_review',
         args: [selectedCase.case_id, extraUrls, enBancStatement.trim(), selectedCase.verdict],
-        value: BigInt(doubleStake),
+        value: doubleStakeWei,
       });
 
       setLastTxHash(tx);
@@ -731,9 +763,14 @@ export default function App() {
                           Case #{c.case_id}
                         </span>
                       </div>
-                      <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">
-                        Sanction: {c.action_taken}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-emerald-950/40 text-emerald-400 border border-emerald-500/20">
+                          {formatGen(c.stake)} GEN
+                        </span>
+                        <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+                          Sanction: {c.action_taken}
+                        </span>
+                      </div>
                     </div>
 
                     <div className="space-y-1.5">
@@ -1120,6 +1157,10 @@ export default function App() {
             {/* Platform Sanction & URLs */}
             <div className="space-y-2 text-xs">
               <div className="bg-slate-900 p-3 rounded-lg flex items-center justify-between">
+                <span className="text-slate-400 font-semibold">Stake Locked:</span>
+                <span className="font-mono text-emerald-400 font-bold">{formatGen(selectedCase.stake)} GEN</span>
+              </div>
+              <div className="bg-slate-900 p-3 rounded-lg flex items-center justify-between">
                 <span className="text-slate-400 font-semibold">Action Contested:</span>
                 <span className="font-mono text-rose-300 font-bold">{selectedCase.action_taken}</span>
               </div>
@@ -1219,12 +1260,16 @@ export default function App() {
               </div>
             ) : (
               <div className="pt-3 border-t border-slate-800 flex items-center justify-between">
-                <button
-                  onClick={() => setShowEnBancModal(true)}
-                  className="bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/40 px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5"
-                >
-                  <Landmark className="w-3.5 h-3.5" /> Petition En Banc Full-Court Review
-                </button>
+                {selectedCase.state === 'UNDER_REVIEW' ? (
+                  <span className="text-xs text-slate-400 italic">Case is currently under primary review...</span>
+                ) : (
+                  <button
+                    onClick={() => setShowEnBancModal(true)}
+                    className="bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/40 px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5"
+                  >
+                    <Landmark className="w-3.5 h-3.5" /> Petition En Banc Full-Court Review
+                  </button>
+                )}
                 <button
                   onClick={() => setSelectedCase(null)}
                   className="text-xs text-slate-400 hover:text-white font-medium"
@@ -1255,7 +1300,14 @@ export default function App() {
 
             <p className="text-xs text-slate-300 leading-relaxed">
               En Banc conducts a multi-source review of Case #{selectedCase.case_id}. Provide 1–2 additional published evidence URLs (platform terms, help center FAQ, public precedent). Double stake required (
-              {(parseInt(selectedCase.stake, 10) * 2).toLocaleString()} GEN), refunded if reversed.
+              {formatGen(
+                (selectedCase.stake
+                  ? BigInt(selectedCase.stake) < 1000000000000000n
+                    ? BigInt(selectedCase.stake) * WEI_PER_GEN
+                    : BigInt(selectedCase.stake)
+                  : 1000n * WEI_PER_GEN) * 2n
+              )}{' '}
+              GEN), refunded if reversed.
             </p>
 
             <div className="space-y-3 text-xs">

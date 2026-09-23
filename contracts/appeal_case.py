@@ -61,7 +61,7 @@ class AppealCase(gl.Contract):
 
     def __init__(self):
         self.admin = gl.message.sender_address
-        self.min_stake = bigint(1000)
+        self.min_stake = bigint(1000 * (10**18))
         self.next_id = bigint(1)
 
     @gl.public.write
@@ -77,7 +77,15 @@ class AppealCase(gl.Contract):
             raise gl.vm.UserError("Only admin can set min stake")
         if new_min_stake <= 0:
             raise gl.vm.UserError("Min stake must be positive")
-        self.min_stake = bigint(new_min_stake)
+        if new_min_stake < 10**15:
+            self.min_stake = bigint(new_min_stake * (10**18))
+        else:
+            self.min_stake = bigint(new_min_stake)
+
+    @gl.public.write.payable
+    def fund_pool(self) -> None:
+        """Allow admin or supporters to deposit native GEN into the court payout pool."""
+        pass
 
     @gl.public.write.payable
     def file_appeal(
@@ -144,7 +152,7 @@ class AppealCase(gl.Contract):
             state="UNDER_REVIEW",
             verdict="",
             reason="",
-            rule_clauses_cited=DynArray[str]([]),
+            rule_clauses_cited=[],
             confidence=u8(0),
             en_banc_contract=_addr_str(self.en_banc_contract),
             reputation_contract=_addr_str(self.reputation_contract),
@@ -188,7 +196,7 @@ class AppealCase(gl.Contract):
 
             if not rule_text and not content_text and not content_quote:
                 raise gl.vm.UserError(
-                    "Both rule and content URLs unreachable — cannot judge"
+                    "Both rule and content URLs unreachable - cannot judge"
                 )
 
             prompt = f"""You are a decentralized AI jury reviewing a content moderation appeal on GenLayer.
@@ -256,13 +264,13 @@ RESPOND WITH ONLY VALID JSON (no markdown code fence):
             case.verdict = verdict
             case.reason = f"Low confidence ({confidence}%). Auto-escalated for full-court En Banc appellate review. {reason}"
             case.confidence = u8(max(0, min(100, confidence)))
-            case.rule_clauses_cited = DynArray[str]([str(c) for c in clauses[:5]])
+            case.rule_clauses_cited = [str(c) for c in clauses[:5]]
             return
 
         case.verdict = verdict
         case.reason = reason
         case.confidence = u8(max(0, min(100, confidence)))
-        case.rule_clauses_cited = DynArray[str]([str(c) for c in clauses[:5]])
+        case.rule_clauses_cited = [str(c) for c in clauses[:5]]
         case.state = "RULED"
         case.ruled_at_epoch = _now_epoch()
 
@@ -270,39 +278,47 @@ RESPOND WITH ONLY VALID JSON (no markdown code fence):
 
     def _settle_stake_and_report(self, case_id: str, verdict: str) -> None:
         case = self.cases[case_id]
+        case.verdict = verdict
 
         if verdict == "OVERTURN":
-            # 100% refund of stake to appellant
-            try:
-                gl.get_contract_at(Address(case.appellant)).emit_transfer(
-                    value=u256(int(case.stake))
-                )
-            except Exception:
-                pass
+            # 100% refund of stake to appellant - atomic, no silent error suppression
+            gl.get_contract_at(Address(case.appellant)).emit_transfer(
+                value=u256(int(case.stake))
+            )
             rep_label = "WIN"
         elif verdict == "REDUCE_SEVERITY":
             # 50% partial refund of stake
             half = int(case.stake) // 2
-            try:
-                gl.get_contract_at(Address(case.appellant)).emit_transfer(
-                    value=u256(half)
-                )
-            except Exception:
-                pass
+            gl.get_contract_at(Address(case.appellant)).emit_transfer(
+                value=u256(half)
+            )
             rep_label = "PARTIAL"
         else:
             # UPHOLD_BAN -> stake forfeited
             rep_label = "LOSS"
 
-        case.state = "FINAL"
-
         # Record verdict on CreatorReputation
         if self.reputation_contract:
-            try:
-                rep = gl.get_contract_at(self.reputation_contract)
-                rep.record_verdict(args=[case.appellant, case.platform, rep_label])
-            except Exception:
-                pass
+            rep = gl.get_contract_at(self.reputation_contract)
+            rep.emit().record_verdict(case.appellant, case.platform, rep_label)
+
+        case.state = "FINAL"
+
+    @gl.public.write
+    def notify_en_banc_requested(self, case_id: str) -> None:
+        sender_str = _addr_str(gl.message.sender_address)
+        is_eb = (
+            self.en_banc_contract
+            and sender_str.lower() == _addr_str(self.en_banc_contract).lower()
+        )
+        if not is_eb and gl.message.sender_address != self.admin:
+            raise gl.vm.UserError("Only En Banc contract can notify")
+        if case_id not in self.cases:
+            raise gl.vm.UserError("Case not found")
+        case = self.cases[case_id]
+        if case.state not in ["RULED", "FINAL", "EN_BANC_REQUESTED"]:
+            raise gl.vm.UserError("Case not eligible for En Banc review")
+        case.state = "EN_BANC_REQUESTED"
 
     @gl.public.write.payable
     def request_en_banc(
@@ -328,9 +344,8 @@ RESPOND WITH ONLY VALID JSON (no markdown code fence):
 
         # Delegate execution to EnBanc contract
         eb = gl.get_contract_at(self.en_banc_contract)
-        eb.request_review(
-            args=[case_id, extra_urls, statement, case.verdict],
-            value=u256(int(gl.message.value)),
+        eb.emit(value=u256(int(gl.message.value))).request_review(
+            case_id, extra_urls, statement, case.verdict
         )
 
     @gl.public.write
@@ -342,7 +357,10 @@ RESPOND WITH ONLY VALID JSON (no markdown code fence):
         confidence: int,
     ) -> None:
         sender_str = _addr_str(gl.message.sender_address)
-        is_eb = sender_str.lower() == _addr_str(self.en_banc_contract).lower()
+        is_eb = (
+            self.en_banc_contract
+            and sender_str.lower() == _addr_str(self.en_banc_contract).lower()
+        )
         if not is_eb and gl.message.sender_address != self.admin:
             raise gl.vm.UserError("Only En Banc contract can settle appeal from review")
 
@@ -351,29 +369,24 @@ RESPOND WITH ONLY VALID JSON (no markdown code fence):
 
         case = self.cases[case_id]
         old_verdict = case.verdict
+
+        # If verdict was overturned or reduced in En Banc, settle stake first
+        if old_verdict == "UPHOLD_BAN" and verdict in ["OVERTURN", "REDUCE_SEVERITY"]:
+            if verdict == "OVERTURN":
+                gl.get_contract_at(Address(case.appellant)).emit_transfer(
+                    value=u256(int(case.stake))
+                )
+            elif verdict == "REDUCE_SEVERITY":
+                half = int(case.stake) // 2
+                gl.get_contract_at(Address(case.appellant)).emit_transfer(
+                    value=u256(half)
+                )
+
         case.verdict = verdict
         case.reason = f"[En Banc Appellate Review]: {reason}"
         case.confidence = u8(max(0, min(100, confidence)))
         case.state = "FINAL"
         case.ruled_at_epoch = _now_epoch()
-
-        # If verdict was overturned or reduced in En Banc, settle stake
-        if old_verdict == "UPHOLD_BAN" and verdict in ["OVERTURN", "REDUCE_SEVERITY"]:
-            if verdict == "OVERTURN":
-                try:
-                    gl.get_contract_at(Address(case.appellant)).emit_transfer(
-                        value=u256(int(case.stake))
-                    )
-                except Exception:
-                    pass
-            elif verdict == "REDUCE_SEVERITY":
-                half = int(case.stake) // 2
-                try:
-                    gl.get_contract_at(Address(case.appellant)).emit_transfer(
-                        value=u256(half)
-                    )
-                except Exception:
-                    pass
 
     @gl.public.write
     def admin_seed_case(
@@ -399,6 +412,7 @@ RESPOND WITH ONLY VALID JSON (no markdown code fence):
         self.next_id = bigint(case_id_int + 1)
         case_id_str = str(case_id_int)
 
+        actual_stake = stake * (10**18) if stake < 10**15 else stake
         new_case = Case(
             appellant=appellant,
             platform=platform,
@@ -407,7 +421,7 @@ RESPOND WITH ONLY VALID JSON (no markdown code fence):
             content_url=content_url,
             content_quote=content_quote,
             explanation=explanation,
-            stake=bigint(stake),
+            stake=bigint(actual_stake),
             state=state,
             verdict=verdict,
             reason=reason,

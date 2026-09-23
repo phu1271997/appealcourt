@@ -1,62 +1,51 @@
 """Test file_appeal with UPHOLD_BAN verdict and stake forfeiture."""
 
+from pathlib import Path
 import json
-from gltest import get_contract_factory
-from genlayer_py import create_client
-from genlayer_py.chains import studionet
+
+from gltest.direct.vm import VMContext
+from gltest.direct.loader import deploy_contract, create_address
 
 
-def test_file_appeal_uphold(admin, appellant):
-    rep_factory = get_contract_factory("CreatorReputation")
-    rep_contract = rep_factory.deploy(account=admin)
+CONTRACTS_DIR = Path(__file__).resolve().parent.parent / "contracts"
+WEI_PER_GEN = 10**18
 
-    case_factory = get_contract_factory("AppealCase")
-    case_contract = case_factory.deploy(account=admin)
 
-    case_contract.connect(admin).set_dependencies(
-        args=[admin.address, rep_contract.address]
-    ).transact()
-    rep_contract.connect(admin).set_authorized(
-        args=[case_contract.address, True]
-    ).transact()
+def test_file_appeal_uphold():
+    ctx = VMContext()
+    admin = create_address("admin")
+    alice = create_address("alice")
+    ctx.sender = admin
 
-    # Install simulator mocks for UPHOLD
-    client = create_client(chain=studionet, account=admin)
-    try:
-        client.provider.make_request(
-            method="sim_installMocks",
-            params={
-                "llm_mocks": {
-                    ".*": json.dumps({
-                        "verdict": "UPHOLD_BAN",
-                        "confidence": 94,
-                        "reason": "Content contains explicit doxxing and private residential addresses.",
-                        "rule_clauses_cited": ["Rule 3: Privacy & anti-harassment"],
-                        "suggested_lower_action": ""
-                    })
-                },
-                "web_mocks": {
-                    ".*rules.*": {"status": 200, "body": "Rule 3: Privacy & anti-harassment policy"}
-                }
-            }
-        )
-    except Exception:
-        pass
+    ctx.mock_web(".*", {"status": 200, "body": "Rule 3: Privacy & anti-harassment policy"})
+    ctx.mock_llm(
+        ".*",
+        json.dumps({
+            "verdict": "UPHOLD_BAN",
+            "confidence": 94,
+            "reason": "Content contains explicit doxxing and private residential addresses.",
+            "rule_clauses_cited": ["Rule 3: Privacy & anti-harassment"],
+            "suggested_lower_action": "",
+        }),
+    )
 
-    # File appeal
-    case_contract.connect(appellant).file_appeal(
-        args=[
+    with ctx.activate():
+        appeal = deploy_contract(CONTRACTS_DIR / "appeal_case.py", ctx)
+
+        ctx.sender = alice
+        ctx.value = 1000 * WEI_PER_GEN
+
+        case_id = appeal.file_appeal(
             "Reddit",
             "BAN",
             "https://www.redditinc.com/policies/content-policy",
             "https://www.reddithelp.com/hc/en-us/articles/360043503951-What-are-Reddit-s-rules",
             "Doxxed content",
             "Claiming this was public interest",
-        ]
-    ).transact(value=1000)
+        )
 
-    # Read case
-    raw = case_contract.get_case("1").call()
-    data = json.loads(raw)
-    assert data["platform"] == "Reddit"
-    assert data["verdict"] in ["UPHOLD_BAN", ""]
+        raw = appeal.get_case(case_id)
+        data = json.loads(raw)
+        assert data["platform"] == "Reddit"
+        assert data["verdict"] == "UPHOLD_BAN"
+        assert data["state"] == "FINAL"

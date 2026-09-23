@@ -1,57 +1,79 @@
 """Edge cases testing for AppealCourt contracts."""
 
+from pathlib import Path
 import pytest
-from gltest import get_contract_factory
+
+from gltest.direct.vm import VMContext
+from gltest.direct.loader import deploy_contract, create_address
 
 
-def test_stake_below_minimum(admin, appellant):
-    factory = get_contract_factory("AppealCase")
-    case_contract = factory.deploy(account=admin)
+CONTRACTS_DIR = Path(__file__).resolve().parent.parent / "contracts"
+WEI_PER_GEN = 10**18
 
-    # Min stake is 1000 GEN, sending only 500 should fail
-    with pytest.raises(Exception):
-        case_contract.connect(appellant).file_appeal(
-            args=[
+
+def test_stake_below_minimum():
+    ctx = VMContext()
+    admin = create_address("admin")
+    alice = create_address("alice")
+    ctx.sender = admin
+
+    with ctx.activate():
+        appeal = deploy_contract(CONTRACTS_DIR / "appeal_case.py", ctx)
+
+        # Min stake is 1000 GEN in base units, sending only 500 should fail
+        ctx.sender = alice
+        ctx.value = 500 * WEI_PER_GEN
+        with pytest.raises(Exception):
+            appeal.file_appeal(
                 "YouTube",
                 "DEMONETIZATION",
                 "https://support.google.com/youtube/answer/6162278",
                 "https://en.wikipedia.org/wiki/Fair_use",
                 "Short quote",
                 "Explanation of fair use",
-            ]
-        ).transact(value=500)
+            )
 
 
-def test_url_must_be_https(admin, appellant):
-    factory = get_contract_factory("AppealCase")
-    case_contract = factory.deploy(account=admin)
+def test_url_must_be_https():
+    ctx = VMContext()
+    admin = create_address("admin")
+    alice = create_address("alice")
+    ctx.sender = admin
 
-    # HTTP URL should be rejected
-    with pytest.raises(Exception):
-        case_contract.connect(appellant).file_appeal(
-            args=[
+    with ctx.activate():
+        appeal = deploy_contract(CONTRACTS_DIR / "appeal_case.py", ctx)
+
+        # HTTP URL should be rejected
+        ctx.sender = alice
+        ctx.value = 1000 * WEI_PER_GEN
+        with pytest.raises(Exception):
+            appeal.file_appeal(
                 "YouTube",
                 "DEMONETIZATION",
                 "http://insecure-rules.com",
                 "https://en.wikipedia.org/wiki/Fair_use",
                 "Short quote",
                 "Explanation",
-            ]
-        ).transact(value=1000)
+            )
 
 
-def test_unsupported_platform(admin, appellant):
-    factory = get_contract_factory("AppealCase")
-    case_contract = factory.deploy(account=admin)
+def test_unsupported_platform():
+    ctx = VMContext()
+    admin = create_address("admin")
+    alice = create_address("alice")
+    ctx.sender = admin
 
-    with pytest.raises(Exception):
-        case_contract.connect(appellant).file_appeal(
-            args=[
+    with ctx.activate():
+        appeal = deploy_contract(CONTRACTS_DIR / "appeal_case.py", ctx)
+
+        ctx.sender = alice
+        ctx.value = 1000 * WEI_PER_GEN
+        with pytest.raises(Exception):
+            appeal.file_appeal(
                 "FakePlatformXYZ",
                 "DEMONETIZATION",
                 "https://example-guidelines.com",
                 "https://example-content.com",
                 "Short quote",
                 "Explanation",
-            ]
-        ).transact(value=1000)
+            )

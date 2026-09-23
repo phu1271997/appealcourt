@@ -172,6 +172,38 @@ def main() -> int:
     retry_call(lambda: client.wait_for_transaction_receipt(tx4, status="ACCEPTED", interval=2000, retries=30))
     print("    Linked dependencies on AppealCase.")
 
+    # Fund initial payout pools with native GEN
+    print("\n[+] Funding contract refund pools with native GEN...")
+    try:
+        tx5 = retry_call(
+            lambda: client.write_contract(
+                address=appeal_addr,
+                function_name="fund_pool",
+                args=[],
+                value=5000 * (10**18),
+                account=account,
+            )
+        )
+        retry_call(lambda: client.wait_for_transaction_receipt(tx5, status="ACCEPTED", interval=2000, retries=30))
+        print("    Funded AppealCase pool with 5,000 GEN.")
+    except Exception as e:
+        print(f"    [!] AppealCase funding note: {e}")
+
+    try:
+        tx6 = retry_call(
+            lambda: client.write_contract(
+                address=enbanc_addr,
+                function_name="fund_pool",
+                args=[],
+                value=10000 * (10**18),
+                account=account,
+            )
+        )
+        retry_call(lambda: client.wait_for_transaction_receipt(tx6, status="ACCEPTED", interval=2000, retries=30))
+        print("    Funded EnBanc pool with 10,000 GEN.")
+    except Exception as e:
+        print(f"    [!] EnBanc funding note: {e}")
+
     deployments = {
         "network": "studionet",
         "chainId": studionet.id,
